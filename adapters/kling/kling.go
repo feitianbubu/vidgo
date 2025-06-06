@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/feitianbubu/vidgo/adapters"
+	"github.com/golang-jwt/jwt"
 )
 
 // Provider implements the adapters.Provider interface for Kling video generation
@@ -32,6 +33,16 @@ type KlingGenerationRequest struct {
 	AspectRatio  string  `json:"aspect_ratio,omitempty"`
 	CameraMoving *string `json:"camera_moving,omitempty"`
 	Model        string  `json:"model,omitempty"`
+	ModelName    string  `json:"model_name,omitempty"`
+	CfgScale     float64 `json:"cfg_scale,omitempty"`
+	StaticMask   string  `json:"static_mask,omitempty"`
+	DynamicMasks []struct {
+		Mask         string `json:"mask"`
+		Trajectories []struct {
+			X int `json:"x"`
+			Y int `json:"y"`
+		} `json:"trajectories"`
+	} `json:"dynamic_masks,omitempty"`
 }
 
 // KlingGenerationResponse represents Kling's response format
@@ -96,7 +107,7 @@ func New(config *adapters.ProviderConfig) (adapters.Provider, error) {
 
 	baseURL := config.BaseURL
 	if baseURL == "" {
-		baseURL = "https://api.kuaishou.com"
+		baseURL = "https://api.klingai.com"
 	}
 
 	timeout := config.Timeout
@@ -154,7 +165,7 @@ func (p *Provider) CreateGeneration(ctx context.Context, req *adapters.Generatio
 		return nil, fmt.Errorf("failed to create JWT token: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/api/open/v1/video/generation", p.baseURL)
+	url := fmt.Sprintf("%s/v1/videos/image2video", p.baseURL)
 	resp, err := p.makeRequest(ctx, "POST", url, token, klingReq)
 	if err != nil {
 		return nil, err
@@ -183,7 +194,7 @@ func (p *Provider) GetGeneration(ctx context.Context, taskID string) (*adapters.
 		return nil, fmt.Errorf("failed to create JWT token: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/api/open/v1/video/generation/%s", p.baseURL, taskID)
+	url := fmt.Sprintf("%s/v1/videos/image2video/%s", p.baseURL, taskID)
 	resp, err := p.makeRequest(ctx, "GET", url, token, nil)
 	if err != nil {
 		return nil, err
@@ -205,8 +216,10 @@ func (p *Provider) GetGeneration(ctx context.Context, taskID string) (*adapters.
 // convertToKlingRequest converts standard request to Kling format
 func (p *Provider) convertToKlingRequest(req *adapters.GenerationRequest) *KlingGenerationRequest {
 	klingReq := &KlingGenerationRequest{
-		Prompt: req.Prompt,
-		Image:  req.Image,
+		Prompt:    req.Prompt,
+		Image:     req.Image,
+		ModelName: req.Model,
+		Model:     req.Model,
 	}
 
 	if req.Image != "" {
@@ -224,11 +237,13 @@ func (p *Provider) convertToKlingRequest(req *adapters.GenerationRequest) *Kling
 	aspectRatio := p.getAspectRatio(req.Width, req.Height)
 	klingReq.AspectRatio = aspectRatio
 
-	if req.Model != "" {
-		klingReq.Model = req.Model
-	} else {
+	if req.Model == "" {
 		klingReq.Model = "kling-v2-master"
+		klingReq.ModelName = "kling-v2-master"
 	}
+
+	// 设置默认的cfg_scale
+	klingReq.CfgScale = 0.5
 
 	return klingReq
 }
@@ -286,9 +301,21 @@ func (p *Provider) convertStatus(status string) adapters.TaskStatus {
 	}
 }
 
-// createJWTToken creates JWT token for Kling API
+// createJWTToken creates JWT token for Kling API with proper JWT signature
 func (p *Provider) createJWTToken() (string, error) {
-	return fmt.Sprintf("%s:%s", p.accessKey, p.secretKey), nil
+	now := time.Now().Unix()
+	claims := jwt.MapClaims{
+		"iss": p.accessKey,
+		"exp": now + 1800, // 30分钟
+		"nbf": now - 5,    // 提前5秒生效
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	token.Header["typ"] = "JWT"
+	tokenString, err := token.SignedString([]byte(p.secretKey))
+	if err != nil {
+		return "", err
+	}
+	return tokenString, nil
 }
 
 // makeRequest makes HTTP request with proper authentication
