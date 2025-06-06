@@ -1,4 +1,4 @@
-package adapters
+package kling
 
 import (
 	"bytes"
@@ -10,131 +10,13 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/feitianbubu/vidgo/adapters"
 )
 
-// Type definitions to avoid circular imports
-
-// TaskStatus represents the status of a video generation task
-type TaskStatus string
-
-const (
-	TaskStatusQueued     TaskStatus = "queued"
-	TaskStatusProcessing TaskStatus = "processing"
-	TaskStatusSucceeded  TaskStatus = "succeeded"
-	TaskStatusFailed     TaskStatus = "failed"
-)
-
-// ResponseFormat represents the format of the response
-type ResponseFormat string
-
-const (
-	ResponseFormatURL     ResponseFormat = "url"
-	ResponseFormatB64JSON ResponseFormat = "b64_json"
-)
-
-// QualityLevel represents the quality level of the video
-type QualityLevel string
-
-const (
-	QualityLevelLow      QualityLevel = "low"
-	QualityLevelStandard QualityLevel = "standard"
-	QualityLevelHigh     QualityLevel = "high"
-)
-
-// GenerationRequest represents a video generation request
-type GenerationRequest struct {
-	Prompt         string                 `json:"prompt,omitempty"`
-	Image          string                 `json:"image,omitempty"`
-	Style          string                 `json:"style,omitempty"`
-	Duration       float64                `json:"duration"`
-	FPS            int                    `json:"fps,omitempty"`
-	Width          int                    `json:"width"`
-	Height         int                    `json:"height"`
-	ResponseFormat ResponseFormat         `json:"response_format,omitempty"`
-	QualityLevel   QualityLevel           `json:"quality_level,omitempty"`
-	Seed           *int                   `json:"seed,omitempty"`
-	Model          string                 `json:"model,omitempty"`
-	Metadata       map[string]interface{} `json:"metadata,omitempty"`
-}
-
-// GenerationResponse represents the response from creating a generation task
-type GenerationResponse struct {
-	TaskID string     `json:"task_id"`
-	Status TaskStatus `json:"status"`
-}
-
-// TaskResult represents the result of a video generation task
-type TaskResult struct {
-	TaskID   string     `json:"task_id"`
-	Status   TaskStatus `json:"status"`
-	URL      string     `json:"url,omitempty"`
-	Format   string     `json:"format,omitempty"`
-	Metadata *Metadata  `json:"metadata,omitempty"`
-	Error    *TaskError `json:"error,omitempty"`
-}
-
-// Metadata contains video metadata information
-type Metadata struct {
-	Duration float64 `json:"duration,omitempty"`
-	FPS      int     `json:"fps,omitempty"`
-	Width    int     `json:"width,omitempty"`
-	Height   int     `json:"height,omitempty"`
-	Seed     *int    `json:"seed,omitempty"`
-	Format   string  `json:"format,omitempty"`
-}
-
-// TaskError represents an error in task execution
-type TaskError struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-}
-
-// ProviderConfig holds configuration for a specific provider
-type ProviderConfig struct {
-	BaseURL    string            `json:"base_url"`
-	APIKey     string            `json:"api_key"`
-	SecretKey  string            `json:"secret_key,omitempty"`
-	Timeout    time.Duration     `json:"timeout"`
-	RetryCount int               `json:"retry_count"`
-	Extra      map[string]string `json:"extra,omitempty"`
-}
-
-// ValidationError represents a request validation error
-type ValidationError struct {
-	Field   string `json:"field"`
-	Message string `json:"message"`
-}
-
-func (e *ValidationError) Error() string {
-	return fmt.Sprintf("validation error for field '%s': %s", e.Field, e.Message)
-}
-
-// APIError represents an error returned by the video generation API
-type APIError struct {
-	Code     int    `json:"code"`
-	Message  string `json:"message"`
-	Provider string `json:"provider,omitempty"`
-}
-
-func (e *APIError) Error() string {
-	if e.Provider != "" {
-		return fmt.Sprintf("[%s] API error %d: %s", e.Provider, e.Code, e.Message)
-	}
-	return fmt.Sprintf("API error %d: %s", e.Code, e.Message)
-}
-
-// Provider interface (minimal for adapters)
-type Provider interface {
-	Name() string
-	CreateGeneration(ctx context.Context, req *GenerationRequest) (*GenerationResponse, error)
-	GetGeneration(ctx context.Context, taskID string) (*TaskResult, error)
-	SupportedModels() []string
-	ValidateRequest(req *GenerationRequest) error
-}
-
-// KlingProvider implements the Provider interface for Kling video generation
-type KlingProvider struct {
-	config    *ProviderConfig
+// Provider implements the adapters.Provider interface for Kling video generation
+type Provider struct {
+	config    *adapters.ProviderConfig
 	client    *http.Client
 	baseURL   string
 	accessKey string
@@ -195,14 +77,14 @@ type KlingVideo struct {
 	Duration string `json:"duration"`
 }
 
-var klingModels = []string{
+var supportedModels = []string{
 	"kling-v1",
 	"kling-v1-6",
 	"kling-v2-master",
 }
 
-// NewKlingProvider creates a new Kling provider instance
-func NewKlingProvider(config *ProviderConfig) (Provider, error) {
+// New creates a new Kling provider instance
+func New(config *adapters.ProviderConfig) (adapters.Provider, error) {
 	if config == nil {
 		return nil, fmt.Errorf("invalid configuration")
 	}
@@ -222,7 +104,7 @@ func NewKlingProvider(config *ProviderConfig) (Provider, error) {
 		timeout = 30 * time.Second
 	}
 
-	return &KlingProvider{
+	return &Provider{
 		config:    config,
 		client:    &http.Client{Timeout: timeout},
 		baseURL:   baseURL,
@@ -232,51 +114,46 @@ func NewKlingProvider(config *ProviderConfig) (Provider, error) {
 }
 
 // Name returns the provider name
-func (p *KlingProvider) Name() string {
+func (p *Provider) Name() string {
 	return "Kling"
 }
 
 // SupportedModels returns supported models
-func (p *KlingProvider) SupportedModels() []string {
-	return append([]string{}, klingModels...)
+func (p *Provider) SupportedModels() []string {
+	return append([]string{}, supportedModels...)
 }
 
 // ValidateRequest validates the request for Kling
-func (p *KlingProvider) ValidateRequest(req *GenerationRequest) error {
+func (p *Provider) ValidateRequest(req *adapters.GenerationRequest) error {
 	if req.Model != "" {
 		found := false
-		for _, model := range klingModels {
+		for _, model := range supportedModels {
 			if model == req.Model {
 				found = true
 				break
 			}
 		}
 		if !found {
-			return &ValidationError{
-				Field:   "model",
-				Message: fmt.Sprintf("unsupported model: %s", req.Model),
-			}
+			return fmt.Errorf("unsupported model: %s", req.Model)
 		}
 	}
 
 	if req.Duration != 5.0 && req.Duration != 10.0 {
-		return &ValidationError{
-			Field:   "duration",
-			Message: "Kling only supports 5s or 10s duration",
-		}
+		return fmt.Errorf("Kling only supports 5s or 10s duration")
 	}
 
 	return nil
 }
 
 // CreateGeneration creates a video generation task
-func (p *KlingProvider) CreateGeneration(ctx context.Context, req *GenerationRequest) (*GenerationResponse, error) {
+func (p *Provider) CreateGeneration(ctx context.Context, req *adapters.GenerationRequest) (*adapters.GenerationResponse, error) {
 	klingReq := p.convertToKlingRequest(req)
 
 	token, err := p.createJWTToken()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create JWT token: %w", err)
 	}
+
 	url := fmt.Sprintf("%s/api/open/v1/video/generation", p.baseURL)
 	resp, err := p.makeRequest(ctx, "POST", url, token, klingReq)
 	if err != nil {
@@ -290,25 +167,22 @@ func (p *KlingProvider) CreateGeneration(ctx context.Context, req *GenerationReq
 	}
 
 	if klingResp.Code != 0 {
-		return nil, &APIError{
-			Code:     klingResp.Code,
-			Message:  klingResp.Message,
-			Provider: "Kling",
-		}
+		return nil, fmt.Errorf("API error %d: %s", klingResp.Code, klingResp.Message)
 	}
 
-	return &GenerationResponse{
+	return &adapters.GenerationResponse{
 		TaskID: klingResp.Data.TaskID,
-		Status: TaskStatusQueued,
+		Status: adapters.TaskStatusQueued,
 	}, nil
 }
 
 // GetGeneration retrieves the task status
-func (p *KlingProvider) GetGeneration(ctx context.Context, taskID string) (*TaskResult, error) {
+func (p *Provider) GetGeneration(ctx context.Context, taskID string) (*adapters.TaskResult, error) {
 	token, err := p.createJWTToken()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create JWT token: %w", err)
 	}
+
 	url := fmt.Sprintf("%s/api/open/v1/video/generation/%s", p.baseURL, taskID)
 	resp, err := p.makeRequest(ctx, "GET", url, token, nil)
 	if err != nil {
@@ -322,18 +196,14 @@ func (p *KlingProvider) GetGeneration(ctx context.Context, taskID string) (*Task
 	}
 
 	if klingResp.Code != 0 {
-		return nil, &APIError{
-			Code:     klingResp.Code,
-			Message:  klingResp.Message,
-			Provider: "Kling",
-		}
+		return nil, fmt.Errorf("API error %d: %s", klingResp.Code, klingResp.Message)
 	}
 
 	return p.convertToTaskResult(&klingResp.Data), nil
 }
 
 // convertToKlingRequest converts standard request to Kling format
-func (p *KlingProvider) convertToKlingRequest(req *GenerationRequest) *KlingGenerationRequest {
+func (p *Provider) convertToKlingRequest(req *adapters.GenerationRequest) *KlingGenerationRequest {
 	klingReq := &KlingGenerationRequest{
 		Prompt: req.Prompt,
 		Image:  req.Image,
@@ -364,7 +234,7 @@ func (p *KlingProvider) convertToKlingRequest(req *GenerationRequest) *KlingGene
 }
 
 // getAspectRatio determines aspect ratio from width and height
-func (p *KlingProvider) getAspectRatio(width, height int) string {
+func (p *Provider) getAspectRatio(width, height int) string {
 	ratio := float64(width) / float64(height)
 
 	switch {
@@ -378,8 +248,8 @@ func (p *KlingProvider) getAspectRatio(width, height int) string {
 }
 
 // convertToTaskResult converts Kling task result to standard format
-func (p *KlingProvider) convertToTaskResult(data *KlingTaskResult) *TaskResult {
-	result := &TaskResult{
+func (p *Provider) convertToTaskResult(data *KlingTaskResult) *adapters.TaskResult {
+	result := &adapters.TaskResult{
 		TaskID: data.ID,
 		Status: p.convertStatus(data.Status),
 	}
@@ -390,7 +260,7 @@ func (p *KlingProvider) convertToTaskResult(data *KlingTaskResult) *TaskResult {
 		result.Format = "mp4"
 
 		if duration, err := strconv.ParseFloat(video.Duration, 64); err == nil {
-			result.Metadata = &Metadata{
+			result.Metadata = &adapters.Metadata{
 				Duration: duration,
 				Format:   "mp4",
 			}
@@ -401,29 +271,28 @@ func (p *KlingProvider) convertToTaskResult(data *KlingTaskResult) *TaskResult {
 }
 
 // convertStatus converts Kling status to standard status
-func (p *KlingProvider) convertStatus(status string) TaskStatus {
+func (p *Provider) convertStatus(status string) adapters.TaskStatus {
 	switch status {
 	case "submitted", "queued":
-		return TaskStatusQueued
+		return adapters.TaskStatusQueued
 	case "processing":
-		return TaskStatusProcessing
+		return adapters.TaskStatusProcessing
 	case "succeed":
-		return TaskStatusSucceeded
+		return adapters.TaskStatusSucceeded
 	case "failed":
-		return TaskStatusFailed
+		return adapters.TaskStatusFailed
 	default:
-		return TaskStatusQueued
+		return adapters.TaskStatusQueued
 	}
 }
 
 // createJWTToken creates JWT token for Kling API
-func (p *KlingProvider) createJWTToken() (string, error) {
-
+func (p *Provider) createJWTToken() (string, error) {
 	return fmt.Sprintf("%s:%s", p.accessKey, p.secretKey), nil
 }
 
 // makeRequest makes HTTP request with proper authentication
-func (p *KlingProvider) makeRequest(ctx context.Context, method, url, token string, body interface{}) (*http.Response, error) {
+func (p *Provider) makeRequest(ctx context.Context, method, url, token string, body interface{}) (*http.Response, error) {
 	var reqBody io.Reader
 	if body != nil {
 		jsonBody, err := json.Marshal(body)

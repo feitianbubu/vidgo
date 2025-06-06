@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/feitianbubu/vidgo/adapters"
+	"github.com/feitianbubu/vidgo/adapters/kling"
 )
 
 // Client is the main client for video generation
@@ -192,7 +193,7 @@ func createProvider(providerType ProviderType, config *ProviderConfig) (Provider
 
 	switch providerType {
 	case ProviderKling:
-		adapterProvider, err := adapters.NewKlingProvider(adapterConfig)
+		adapterProvider, err := kling.New(adapterConfig)
 		if err != nil {
 			return nil, err
 		}
