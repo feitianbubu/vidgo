@@ -37,6 +37,7 @@ type GenerationRequest struct {
 	Prompt         string                 `json:"prompt,omitempty"`
 	Image          string                 `json:"image,omitempty"`
 	Style          string                 `json:"style,omitempty"`
+	Mode           string                 `json:"mode,omitempty"` // Mode: "std" or "pro", defaults to "std"
 	Duration       float64                `json:"duration"`
 	FPS            int                    `json:"fps,omitempty"`
 	Width          int                    `json:"width"`
