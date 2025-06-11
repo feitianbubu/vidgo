@@ -2,138 +2,202 @@
 
 ## 1. 设计背景
 
-* **缺乏统一标准**：当前各视频生成大模型厂商提供的 API 接口格式差异很大，没有统一的调用规范。302.AI 等平台已尝试将不同模型的接口 **统一格式** 进行封装。
-* **厂商接口多样**：不同厂商（如可灵、即梦、Vidu 等）的视频生成接口各不相同。有的厂商已开放 API（如 Vidu 正式开放了视频生成 API），而有的接口尚未公开或仅限内部使用，给前端接入带来困难。
-* **设计目标**：本接口旨在抽象出通用的调用格式，兼容当前和未来多家视频大模型厂商的能力。前端开发者可统一接入，背后可灵活选择不同模型提供商。
-* **参考 OpenAI 风格**：借鉴 OpenAI API 的设计思路，统一使用版本前缀（如 `/v1` 路径）和 JSON 参数格式；并采用 **异步任务机制**：提交视频生成任务后仅返回任务 ID，前端需轮询查询接口以获取最终结果。
+*   **缺乏统一标准**：当前各视频生成大模型厂商提供的 API 接口格式差异很大，没有统一的调用规范。不同厂商（如可灵、即梦、Vidu, Sora, RunwayML 等）的视频生成接口各不相同。
+*   **设计目标**：本接口旨在抽象出通用的调用格式，兼容当前和未来多家视频大模型厂商的能力。
+*   **参考 OpenAI/Azure 风格**：为保证兼容性和开发者友好性，本接口在设计上尽量参考了 **OpenAI** 的 API 风格与 **Azure AI** 的异步任务模式。我们采用 `/v1/video/generations` 路径来管理异步任务，通过提交任务获取 `task_id`，再通过轮询查询任务状态和结果。
 
 ## 2. 接口设计
 
 ### 接口路径
 
-* **创建任务**（异步/同步请求）：
+*   **创建视频生成任务**：
+    ```
+    POST /v1/video/generations
+    ```
 
-  ```
-  POST /v1/video/generations
-  ```
-* **查询结果**（轮询或回调）：
-
-  ```
-  GET /v1/video/generations/{task_id}
-  ```
+*   **查询任务状态与结果**：
+    ```
+    GET /v1/video/generations/{task_id}
+    ```
 
 ### 请求参数说明
 
-| 参数名               | 类型              | 是否必需 | 说明                                                                        |
-| ----------------- | --------------- | ---- | ------------------------------------------------------------------------- |
-| `prompt`          | 字符串             | 可选   | 文本提示词，用于描述生成视频的内容（文本生视频）。**prompt** 和 **image** 至少需提供一个。                  |
-| `image`           | 字符串（URL/Base64） | 可选   | 图像输入，可作为视频首帧或灵感图（图生视频）。支持外部URL或 Base64 编码。**prompt** 和 **image** 至少需提供一个。 |
-| `style`           | 字符串             | 可选   | 风格名称或模型标识，可指定不同的视频风格（如"动画"、"写实"等），后台可对应不同模型。                              |
-| `duration`        | 数值（秒）           | 必需   | 视频时长（秒）。前端可指定生成视频的时长，例如 `5.0` 表示 5 秒。                                     |
-| `fps`             | 整数              | 可选   | 帧率，表示每秒多少帧视频画面。例如常用 `24` 或 `30`。若不填写，可使用后端默认值。                            |
-| `width`           | 整数              | 必需   | 视频宽度（像素）。常见可选值如 512、768 等。                                                |
-| `height`          | 整数              | 必需   | 视频高度（像素）。常见可选值如 512、768 等。                                                |
-| `response_format` | 字符串             | 可选   | 生成结果的返回格式：`"url"` 返回视频链接（默认），`"b64_json"` 返回 Base64 编码数据。                 |
-| `quality_level`   | 字符串             | 可选   | 画质级别，可选 `"low"`、`"standard"`、`"high"` 等。默认为中等质量。                          |
-| `seed`            | 整数              | 可选   | 随机种子，用于结果复现。相同参数和种子会生成相同视频；可不填写，则随机生成。                                    |
+| 参数名 | 类型 | 是否必需 | 说明 |
+| --- | --- | --- | --- |
+| `model` | 字符串 | 必需 | 指定调用的视频模型ID，例如 `"kling-v2-master"` 或 `"sora-1"`。 |
+| `prompt` | 字符串 | 可选 | 文本提示词，用于描述生成视频的内容。**prompt** 和 **image** 至少需提供一个。 |
+| `negative_prompt` | 字符串 | 可选 | 反向提示词，描述不希望在视频中出现的内容。 |
+| `image` | 字符串（URL/Base64） | 可选 | 图像输入，可作为视频首帧或灵感图。**prompt** 和 **image** 至少需提供一个。 |
+| `duration` | 数值（秒） | 必需 | 期望的视频时长（秒）。例如 `5.0` 表示 5 秒。 |
+| `width` | 整数 | 必需 | 视频宽度（像素）。 |
+| `height` | 整数 | 必需 | 视频高度（像素）。 |
+| `fps` | 整数 | 可选 | 视频帧率。若不填写，则使用模型默认值。 |
+| `n` | 整数 | 可选 | 要生成的视频数量。默认为 `1`。 |
+| `seed` | 整数 | 可选 | 随机种子，用于结果复现。 |
+| `response_format` | 字符串 | 可选 | 生成结果的返回格式：`"url"` 返回视频链接（默认），`"b64_json"` 返回 Base64 编码数据。 |
+| `user` | 字符串 | 可选 | 代表终端用户的唯一标识符，可用于监控和检测滥用行为。 |
+| `metadata` | 对象 (JSON) | 可选 | 元数据，用于透传不同厂商的自定义或非通用参数。例如可灵的 `style`, `quality_level`, `mode` 等。 |
 
 ### 示例请求 JSON
 
-  * POST: `/v1/video/generations`
-  * Content-Type: `application/json`
+*   POST: `/v1/video/generations`
+*   Content-Type: `application/json`
+
 ```json
 {
+  "model": "kling-v2-master",
   "prompt": "在山间日出时分，飞鸟展翅的动画场景。",
+  "negative_prompt": "模糊, 低质量",
   "image": "https://example.com/first_frame.png",
-  "style": "写实",
   "duration": 5.0,
-  "fps": 30,
-  "width": 512,
-  "height": 512,
+  "width": 1920,
+  "height": 1080,
+  "n": 1,
+  "user": "user-1234",
   "response_format": "url",
-  "quality_level": "standard",
-  "seed": 20231234
+  "seed": 20240729,
+  "metadata": {
+    "style": "写实",
+    "quality_level": "standard"
+  }
 }
 ```
 
-### 查询接口响应结构
+### 响应结构说明
 
-查询接口（`GET /v1/video/generations/{task_id}`）返回任务的状态和结果信息，其 JSON 结构示例如下：
+#### 1. 创建任务的响应
 
-| 字段名        | 类型  | 说明                                                                                                           |
-| ---------- | --- | ------------------------------------------------------------------------------------------------------------ |
-| `task_id`  | 字符串 | 任务 ID，与请求时返回的 ID 保持一致。                                                                                       |
-| `status`   | 字符串 | 任务状态：`"queued"`（已排队）、`"processing"`（处理中）、`"succeeded"`（完成）或`"failed"`（失败）等。                                  |
-| `url`      | 字符串 | 视频资源的 URL 地址。当 `status` 为 `"succeeded"` 时有效。若选择 Base64 返回格式，则此处省略，直接在 `result` 或 `data` 中返回编码内容。             |
-| `format`   | 字符串 | 视频文件格式，例如 `"mp4"`、`"gif"` 等。                                                                                 |
-| `metadata` | 对象  | 结果元数据，包括实际生成的视频时长、帧率、分辨率、使用种子等信息。例如：<br>`{"duration":5.0,"fps":30,"width":512,"height":512,"seed":20231234}` |
-
-### 示例响应 JSON
-
-以下示例展示查询任务成功后的响应 JSON：
+调用 `POST` 接口后，系统会立即返回一个任务对象，表示任务已进入队列。
 
 ```json
 {
-  "task_id": "abcd1234efgh",
+  "id": "task_abcd1234efgh",
+  "object": "video.generation.task",
+  "status": "queued",
+  "created_at": 1722238800,
+  "model": "kling-v2-master",
+  "prompt": "在山间日出时分，飞鸟展翅的动画场景。"
+}
+```
+
+#### 2. 查询任务的响应
+
+通过 `GET` 接口轮询任务，会返回完整的任务对象。
+
+| 字段名 | 类型 | 说明 |
+| --- | --- | --- |
+| `id` | 字符串 | 任务的唯一标识符 (`task_id`)。 |
+| `object` | 字符串 | 对象类型，固定为 `"video.generation.task"`。 |
+| `status` | 字符串 | 任务状态：`"queued"` (排队中), `"processing"` (处理中), `"succeeded"` (成功), `"failed"` (失败)。 |
+| `created_at` | 整数 | 任务创建时间的 Unix 时间戳。 |
+| `finished_at` | 整数 \| null | 任务完成时间的 Unix 时间戳，未完成时为 `null`。 |
+| `failure_reason` | 字符串 \| null | 任务失败的原因描述，成功时为 `null`。 |
+| `result` | 对象 \| null | 当 `status` 为 `"succeeded"` 时，此字段包含生成结果。 |
+| `prompt` | 字符串 | 原始的文本提示词。 |
+| `model` | 字符串 | 使用的模型 ID。 |
+
+#### 3. 成功结果 (`result`) 结构
+
+| 字段名 | 类型 | 说明 |
+| --- | --- | --- |
+| `object` | 字符串 | 对象类型，固定为 `"list"`。 |
+| `data` | 数组 | 包含一个或多个视频生成结果对象的数组。 |
+| `data`.`object` | 字符串 | 对象类型，固定为 `"video.generation"`。 |
+| `data`.`url` | 字符串 | 生成视频的 URL 链接（当 `response_format` 为 `"url"`）。 |
+| `data`.`b64_json` | 字符串 | Base64 编码的视频数据（当 `response_format` 为 `"b64_json"`）。 |
+| `data`.`seed` | 整数 | 生成该视频所用的随机种子。 |
+| `data`.`format` | 字符串 | 视频文件格式，例如 `"mp4"`。 |
+
+### 示例响应 JSON
+
+**处理中:**
+
+```json
+{
+  "id": "task_abcd1234efgh",
+  "object": "video.generation.task",
+  "status": "processing",
+  "created_at": 1722238800,
+  "finished_at": null,
+  "failure_reason": null,
+  "result": null,
+  "prompt": "在山间日出时分，飞鸟展翅的动画场景。",
+  "model": "kling-v2-master"
+}
+```
+
+**处理成功:**
+
+```json
+{
+  "id": "task_abcd1234efgh",
+  "object": "video.generation.task",
   "status": "succeeded",
-  "url": "https://cdn.example.com/videos/abcd1234efgh.mp4",
-  "format": "mp4",
-  "metadata": {
-    "duration": 5.0,
-    "fps": 30,
-    "width": 512,
-    "height": 512,
-    "seed": 20231234
-  }
+  "created_at": 1722238800,
+  "finished_at": 1722238920,
+  "failure_reason": null,
+  "result": {
+    "object": "list",
+    "data": [
+      {
+        "object": "video.generation",
+        "url": "https://cdn.example.com/videos/abcd1234efgh.mp4",
+        "b64_json": null,
+        "seed": 20240729,
+        "format": "mp4"
+      }
+    ]
+  },
+  "prompt": "在山间日出时分，飞鸟展翅的动画场景。",
+  "model": "kling-v2-master"
 }
 ```
 
 ### 错误结构格式
 
-若请求参数错误或接口调用失败，返回错误信息，其格式可以为：
+若请求参数错误或接口调用失败，返回标准的错误信息：
 
 ```json
 {
   "error": {
     "code": 400,
-    "message": "Invalid prompt or parameters"
+    "message": "Invalid prompt or parameters",
+    "type": "invalid_request_error"
   }
 }
 ```
 
-其中 `code` 为错误码（HTTP 状态码或内部定义码），`message` 为错误描述。
+## 3. 系统工作流程
 
-## 3. 示例流程图
+视频生成采用**前后端分离的异步任务**模式。
 
-下面给出一个示例流程图，展示视频生成的基本流程：提交任务 -> 等待生成 -> 查询状态 -> 获取视频链接。
+### 流程序列图
 
 ```mermaid
-flowchart LR
-    A[提交任务] --> B[等待生成]
-    B --> C[查询状态]
-    C --> D[获取视频链接]
+sequenceDiagram
+    participant Client as "客户端"
+    participant VideoAPI as "视频生成API"
+    participant TaskQueue as "任务队列"
+    participant Worker as "后台生成服务"
+
+    Client->>VideoAPI: 1. POST /v1/video/generations (提交任务)
+    VideoAPI->>TaskQueue: 2. 创建任务记录 (状态: queued)
+    VideoAPI-->>Client: 3. 立即返回 task_id 和 queued 状态
+
+    loop [并行] 后台处理
+        Worker->>TaskQueue: 4. 从队列获取待处理任务
+        Worker->>Worker: 5. 调用上游模型生成视频
+        Worker->>TaskQueue: 6. 更新任务状态 (succeeded/failed) 和结果
+    end
+
+    loop [并行] 前端轮询
+        Client->>VideoAPI: 7. GET /v1/video/generations/{task_id} (查询状态)
+        VideoAPI->>TaskQueue: 8. 读取任务状态和结果
+        VideoAPI-->>Client: 9. 返回完整的任务对象
+    end
 ```
 
-上述流程为：前端通过 **POST /v1/video/generations** 提交生成任务，后端返回任务 ID 后进入生成队列；前端不断调用 **GET /v1/video/generations/{task\_id}** 查询状态，当状态变为 `succeeded` 时，从响应中获取 `url` 字段，即可获得生成的视频文件链接。
-
-**参考资料：** 已有示例接口设计往往采用异步模式，仅返回任务 ID，再通过查询获取最终结果；OpenAI 等大厂 API 多以 `/v1/` 前缀和 JSON 参数为规范；302.AI 平台也提出统一多模型视频接口的方案。
-
-## 4. 实现状态
-
-### 已实现功能
-
-- ✅ **视频生成接口**：`POST /v1/video/generations`
-- ✅ **任务查询接口**：`GET /v1/video/generations/{task_id}`
-- ✅ **可灵(Kling)适配器**：支持可灵视频生成模型
-- ✅ **统一适配器架构**：使用 `GetAdaptor(relayInfo.ApiType)` 统一获取适配器
-- ✅ **JWT认证**：自动处理可灵API的JWT token生成
-- ✅ **前端集成**：渠道选择下拉框已添加"可灵"选项
-- ✅ **代理支持**：支持通过代理访问上游API
-- ✅ **智能路径识别**：通过URL自动区分生成和查询请求
-- ✅ **扣费系统**：完整的预扣费、最终扣费和配额管理
-- ✅ **消费记录**：详细的视频生成消费日志和统计
-
-### 使用示例
+## 4. 使用示例
 
 #### 1. 创建视频生成任务
 
@@ -142,64 +206,58 @@ curl -X POST "http://localhost:3000/v1/video/generations" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer sk-your-api-key" \
   -d '{
-    "prompt": "在山间日出时分，飞鸟展翅的动画场景。",
-    "duration": 5.0,
-    "width": 512,
-    "height": 512,
-    "fps": 30,
     "model": "kling-v2-master",
-    "quality_level": "standard"
+    "prompt": "一只戴着墨镜的猫在爵士酒吧弹钢琴。",
+    "duration": 5.0,
+    "width": 1024,
+    "height": 1024
   }'
 ```
 
 **响应示例：**
 ```json
 {
-  "task_id": "abcd1234efgh",
-  "status": "queued"
+  "id": "task_abcd1234efgh",
+  "object": "video.generation.task",
+  "status": "queued",
+  "created_at": 1722238800,
+  "model": "kling-v2-master",
+  "prompt": "一只戴着墨镜的猫在爵士酒吧弹钢琴。"
 }
 ```
 
 #### 2. 查询任务状态
 
 ```bash
-curl -X GET "http://localhost:3000/v1/video/generations/abcd1234efgh" \
+curl -X GET "http://localhost:3000/v1/video/generations/task_abcd1234efgh" \
   -H "Authorization: Bearer sk-your-api-key"
 ```
 
-**响应示例（处理中）：**
+**最终成功响应示例：**
 ```json
 {
-  "task_id": "abcd1234efgh",
-  "status": "processing"
-}
-```
-
-**响应示例（完成）：**
-```json
-{
-  "task_id": "abcd1234efgh",
+  "id": "task_abcd1234efgh",
+  "object": "video.generation.task",
   "status": "succeeded",
-  "url": "https://cdn.example.com/videos/abcd1234efgh.mp4",
-  "format": "mp4",
-  "metadata": {
-    "duration": 5.0,
-    "fps": 30,
-    "width": 512,
-    "height": 512,
-    "seed": 20231234
-  }
+  "created_at": 1722238800,
+  "finished_at": 1722238920,
+  "failure_reason": null,
+  "result": {
+    "object": "list",
+    "data": [
+      {
+        "object": "video.generation",
+        "url": "https://cdn.example.com/videos/abcd1234efgh.mp4",
+        "b64_json": null,
+        "seed": 20240729,
+        "format": "mp4"
+      }
+    ]
+  },
+  "prompt": "一只戴着墨镜的猫在爵士酒吧弹钢琴。",
+  "model": "kling-v2-master"
 }
 ```
-
-### 配置说明
-
-1. **添加可灵渠道**：
-   - 渠道类型：选择"可灵 Kling"（类型值：50）
-   - API Key格式：`{access_key},{secret_key}`
-   - Base URL：可灵API的基础URL
-
-2. **支持的模型**：
-   - `kling-v1`
-   - `kling-v1-6`
-   - `kling-v2-master`
+> 参考资料: 
+> * [Azure AI - 快速入門：使用 Sora 產生影片](https://learn.microsoft.com/zh-tw/azure/ai-services/openai/video-generation-quickstart?tabs=windows%2Ckeyless)
+> * [可灵 AI API 接口文档](https://docs.qingque.cn/d/home/eZQAyImcbaS0fz-8ANjXvU5ed?identityId=1oEG9JKKMFv)
