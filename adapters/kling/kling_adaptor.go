@@ -249,14 +249,31 @@ func (k *KlingAdaptor) DoRequest(url string, headers map[string]string, requestB
 	return mockResp, nil
 }
 
-// KlingResponse represents Kling's response format
-type KlingResponse struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-	Data    struct {
-		TaskID string `json:"task_id"`
-		Status string `json:"status,omitempty"`
-	} `json:"data"`
+// Video represents a single video in the response
+type Video struct {
+	ID       string `json:"id"`
+	Url      string `json:"url"`
+	Duration string `json:"duration"`
+}
+
+// TaskResult represents the task result containing videos
+type TaskResult struct {
+	Videos []Video `json:"videos,omitempty"`
+}
+
+// TaskData represents the data field in the response
+type TaskData struct {
+	TaskID     string     `json:"task_id"`
+	Status     string     `json:"status,omitempty"`
+	TaskResult TaskResult `json:"task_result,omitempty"`
+}
+
+// Response represents Kling's response format
+type Response struct {
+	Code    int      `json:"code"`
+	Message string   `json:"message"`
+	Data    TaskData `json:"data"`
+	Url     string   `json:"url,omitempty"`
 }
 
 // DoResponse processes the Kling API response
@@ -273,7 +290,7 @@ func (k *KlingAdaptor) DoResponse(resp *http.Response) (taskID string, taskData 
 	}
 
 	// Try to parse as Kling response first
-	var klingResponse KlingResponse
+	var klingResponse Response
 	err = json.Unmarshal(responseBody, &klingResponse)
 	if err == nil && klingResponse.Code == 0 {
 		// Success response from Kling with taskID and status
@@ -336,18 +353,18 @@ func (k *KlingAdaptor) FetchTask(baseUrl, key string, taskID string) (*http.Resp
 
 	if taskResult.Status == adapters.TaskStatusSucceeded && taskResult.URL != "" {
 		// Task completed with video URL
-		responseData = map[string]interface{}{
-			"code":    0,
-			"message": "success",
-			"data": map[string]interface{}{
-				"id":     taskResult.TaskID,
-				"status": "succeeded",
-				"task_result": map[string]interface{}{
-					"videos": []map[string]interface{}{
+		responseData = Response{
+			Code:    0,
+			Message: "success",
+			Data: TaskData{
+				TaskID: taskResult.TaskID,
+				Status: "succeeded",
+				TaskResult: TaskResult{
+					Videos: []Video{
 						{
-							"id":  taskResult.TaskID,
-							"url": taskResult.URL,
-							"duration": func() string {
+							ID:  taskResult.TaskID,
+							Url: taskResult.URL,
+							Duration: func() string {
 								if taskResult.Metadata != nil {
 									return fmt.Sprintf("%.0f", taskResult.Metadata.Duration)
 								}
@@ -357,6 +374,7 @@ func (k *KlingAdaptor) FetchTask(baseUrl, key string, taskID string) (*http.Resp
 					},
 				},
 			},
+			Url: taskResult.URL,
 		}
 	} else {
 		// Task still in progress or failed
@@ -370,12 +388,12 @@ func (k *KlingAdaptor) FetchTask(baseUrl, key string, taskID string) (*http.Resp
 			status = "failed"
 		}
 
-		responseData = map[string]interface{}{
-			"code":    0,
-			"message": "success",
-			"data": map[string]interface{}{
-				"id":     taskResult.TaskID,
-				"status": status,
+		responseData = Response{
+			Code:    0,
+			Message: "success",
+			Data: TaskData{
+				TaskID: taskResult.TaskID,
+				Status: status,
 			},
 		}
 	}
